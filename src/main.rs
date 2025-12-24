@@ -1,25 +1,18 @@
 use std::thread;
 
 use crate::channels::Channel;
-// use crate::locks::SpinLock;
 
 mod channels;
 mod locks;
 mod pointers;
 
 fn main() {
-    let channel = Channel::new();
-    let t = thread::current();
-
+    let mut channel = Channel::new();
     thread::scope(|s| {
-        s.spawn(|| {
-            channel.send("Hello, my dear James");
-            t.unpark();
+        let (sender, receiver) = channel.split();
+        s.spawn(move || {
+            sender.send("Hello, my dear James");
         });
-
-        while !channel.is_ready() {
-            thread::park();
-        }
+        println!("Hey, {}", receiver.receive())
     });
-    println!("Results: {}", channel.receive())
 }

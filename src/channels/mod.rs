@@ -2,27 +2,27 @@
 
 use std::{
     cell::UnsafeCell,
-    collections::VecDeque,
+    marker::PhantomData,
     mem::MaybeUninit,
     sync::{
-        Condvar, Mutex,
+        Arc,
         atomic::{
             AtomicBool,
             Ordering::{Acquire, Relaxed, Release},
         },
     },
+    thread::{self, Thread},
 };
 
 pub struct Channel<T> {
     message: UnsafeCell<MaybeUninit<T>>,
-    is_ready: AtomicBool,
-    in_use: AtomicBool,
+    ready: AtomicBool,
 }
 
 unsafe impl<T> Sync for Channel<T> where T: Send {}
 impl<T> Drop for Channel<T> {
     fn drop(&mut self) {
-        if *self.is_ready.get_mut() {
+        if *self.ready.get_mut() {
             unsafe {
                 self.message.get_mut().assume_init_drop();
             }
@@ -31,34 +31,56 @@ impl<T> Drop for Channel<T> {
 }
 
 impl<T> Channel<T> {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             message: UnsafeCell::new(MaybeUninit::uninit()),
-            is_ready: AtomicBool::new(false),
-            in_use: AtomicBool::new(false),
+            ready: AtomicBool::new(false),
         }
     }
+    pub fn split<'a>(&'a mut self) -> (Sender<'a, T>, Receiver<'a, T>) {
+        *self = Self::new();
+        (
+            Sender {
+                channel: self,
+                recv_thread: thread::current(),
+            },
+            Receiver {
+                channel: self,
+                _no_send: PhantomData,
+            },
+        )
+    }
+}
 
-    /// Safety: Only call this once!
-    pub fn send(&self, message: T) {
-        if self.in_use.swap(true, Relaxed) {
-            panic!("Can't send more than one message.")
-        }
+pub struct Sender<'a, T> {
+    channel: &'a Channel<T>,
+    recv_thread: Thread,
+}
+
+impl<'a, T> Sender<'a, T> {
+    pub fn send(&self, msg: T) {
         unsafe {
-            (*self.message.get()).write(message);
+            (*self.channel.message.get()).write(msg);
         };
-        self.is_ready.store(true, Release);
+        self.channel.ready.store(true, Release);
+        self.recv_thread.unpark();
     }
+}
 
+pub struct Receiver<'a, T> {
+    channel: &'a Channel<T>,
+    _no_send: PhantomData<*const ()>,
+}
+
+impl<'a, T> Receiver<'a, T> {
     pub fn is_ready(&self) -> bool {
-        self.is_ready.load(Relaxed)
+        self.channel.ready.load(Relaxed)
     }
 
-    /// Safety: Only call this once, and only after is_ready returns true.
     pub fn receive(&self) -> T {
-        if !self.is_ready.swap(false, Acquire) {
-            panic!("No message yet!!")
+        while !self.channel.ready.swap(false, Acquire) {
+            thread::park();
         }
-        unsafe { (*self.message.get()).assume_init_read() }
+        unsafe { (*self.channel.message.get()).assume_init_read() }
     }
 }
