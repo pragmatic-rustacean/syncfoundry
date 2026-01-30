@@ -88,8 +88,9 @@ impl<T> Raulock<T> {
     pub fn read(&self) -> ReadGuard<'_, T> {
         let mut state = self.state.load(std::sync::atomic::Ordering::Relaxed);
         'read: loop {
-            if state < u32::MAX {
-                assert!(state != u32::MAX - 1, "Too many readers");
+            if state % 2 == 0 {
+                // even
+                assert!(state != u32::MAX - 2, "Too many readers");
                 match self.state.compare_exchange(
                     state,
                     state + 1,
@@ -100,7 +101,8 @@ impl<T> Raulock<T> {
                     Err(e) => state = e,
                 }
             }
-            if state == u32::MAX {
+            if state % 2 == 1 {
+                // odd
                 wait(&self.state, u32::MAX);
                 state = self.state.load(std::sync::atomic::Ordering::Relaxed)
             }
