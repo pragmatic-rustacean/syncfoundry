@@ -27,12 +27,17 @@ fn main() {
 
     // More impl
     let mut tlang = LockMate::new(0);
-    black_box(&tlang);
+    // black_box(&tlang);
+    println!("Escaped black box");
     let timer = Instant::now();
-    let scope = thread::scope(|th| {
+    thread::scope(|th| {
+        println!("Inside scoped threads");
         for _ in 0..=5 {
+            println!("Inside for loop");
             th.spawn(|| {
-                for _ in 0..5_000_000 {
+                println!("Inside a spawned thread");
+                for _ in 0..5_000 {
+                    println!("Inside the for loop inside the spawned thread");
                     *tlang.lock() += 1;
                 }
             });
